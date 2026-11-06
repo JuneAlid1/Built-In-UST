@@ -1,11 +1,14 @@
 {
-  "name": "Your Team Name",
-  "tagline": "One sentence: what you do for your customers.",
+  "name": "Built in UST",
+  "tagline": "Minnesota-grown wild rice, sweet corn, and sunflower seeds, sourced directly from family farms.",
   "link": "Source",
   "chain": "A",
-  "about": "Who you are and what you are good at. Replace this with two or three sentences.",
+  "about": "Built in UST is a student-run sourcing firm in the OPMT 375 Supply Lab. We buy directly from Minnesota growers, from wild rice paddies in the north to sweet corn fields in the south, and sell raw ingredients to manufacturers who need a steady, traceable supply. Every lot comes with the farm of origin and the harvest date, so you always know where your ingredients came from.",
   "members": [
-    { "name": "First Last", "github": "github-username", "role": "e.g. operations lead" }
+    { "name": "Ali Dehdarooni", "github": "JuneAlid1", "role": "Systems Lead" },
+    { "name": "Matt Lizak", "github": "matthewlizak", "role": "Operations Lead" },
+    { "name": "Shaquille Ndikum", "github": "shaquille88", "role": "Finance Lead" },
+    { "name": "Nate Miller", "github": "ndmill14", "role": "Logistics Lead" }
   ],
-  "how_to_order": "Tell customers how to place an order with you. (The class will agree on a standard later; for now, write what you think works.)"
+  "how_to_order": "Open a new issue in this repo. Let us know which product you need, how many pounds or bushels, and the date you want it at your door. We will answer in the issue within 5 business days with a price and a confirmed delivery date."
 }
