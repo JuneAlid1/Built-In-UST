@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crop Picker</title>
+<!--
+  DATA SOURCE
+  Source: USDA NASS Quick Stats API  https://quickstats.nass.usda.gov/api
+  Query used (paste in a browser address bar with your own key; it downloads a CSV):
+    https://quickstats.nass.usda.gov/api/api_GET/?key=YOUR_KEY&source_desc=SURVEY&sector_desc=CROPS&state_alpha=MN&agg_level_desc=STATE&statisticcat_desc=PRODUCTION&unit_desc=%24&freq_desc=ANNUAL&year__GE=2015&format=CSV
+  Saved copy: mn-crops.csv (same folder as this page)
+  Downloaded on: [FILL IN DATE]
+
+  WHERE THE DATA LIVES
+  The page never calls the USDA API. It reads the saved mn-crops.csv in this repo,
+  so it keeps working if the USDA site goes down. The numbers only change if
+  someone commits a new mn-crops.csv.
+-->
+<link rel="stylesheet" href="style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  /* Only chart/table layout lives here; colors and type come from style.css */
+  .controls { display:flex; flex-wrap:wrap; gap:16px; align-items:end; }
+  .controls label { display:flex; flex-direction:column; gap:4px; }
+  .chartbox { position:relative; height:420px; }
+  .chartbox.short { height:280px; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid rgba(0,0,0,.1); }
+  .num { text-align:right; font-variant-numeric:tabular-nums; }
+  .tag { font-size:.75em; padding:1px 6px; border-radius:8px; background:#f3e3cf; color:#7a4b12; }
+  .swatch { display:inline-block; width:12px; height:12px; border-radius:2px; margin:0 6px 0 12px; vertical-align:-1px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <p class="eyebrow">OPMT 375 Supply Lab</p>
+    <h1>Which crop should we add next?</h1>
+    <p class="tagline">Minnesota value of production by crop, from USDA NASS survey data.</p>
+  </div>
+</header>
+<main class="wrap">
+  <section>
+    <h2>The question</h2>
+    <p>We sell corn, sunflower seeds, and wild rice. Which Minnesota crop has the most
+       value behind it, and is still growing, so it makes the best fourth product?</p>
+  </section>
+
+  <section>
+    <h2>Top picks</h2>
+    <div id="picks" class="cards"></div>
+  </section>
+
+  <section>
+    <h2>Ranking</h2>
+    <div class="controls">
+      <label>Years to average: <b id="spanOut">5</b>
+        <input type="range" id="span" min="1" max="10" value="5">
+      </label>
+      <label>Show top
+        <select id="topN"><option>10</option><option selected>15</option><option>25</option></select>
+      </label>
+      <label>Or load a different file
+        <input type="file" id="file" accept=".csv,.json">
+      </label>
+    </div>
+    <p class="small">
+      <span class="swatch" style="background:#c9822b"></span>We already sell
+      <span class="swatch" style="background:#3f6e9a"></span>Candidate to add
+    </p>
+    <div class="chartbox"><canvas id="rank"></canvas></div>
+  </section>
+
+  <section>
+    <h2>Trend for one crop</h2>
+    <p><select id="cropPick"></select></p>
+    <div class="chartbox short"><canvas id="trend"></canvas></div>
+  </section>
+
+  <section>
+    <h2>Full table</h2>
+    <table id="tbl"><thead><tr><th>#</th><th>Crop</th><th class="num">Avg value / yr</th>
+      <th class="num">Change, first → last year</th><th class="num">Years</th></tr></thead><tbody></tbody></table>
+  </section>
+
+  <p class="small" id="status"></p>
+  <p class="err" id="err"></p>
+</main>
+<footer class="wrap small">
+  Page data comes from <code>mn-crops.csv</code> in this folder (USDA NASS Quick Stats).
+  Download new data from here:
+  <a href="https://quickstats.nass.usda.gov/api/api_GET/?key=3898CF64-E8B6-3792-9E04-C2FC26F5EB27&amp;source_desc=SURVEY&amp;sector_desc=CROPS&amp;state_alpha=MN&amp;agg_level_desc=STATE&amp;statisticcat_desc=PRODUCTION&amp;unit_desc=%24&amp;freq_desc=ANNUAL&amp;year__GE=2015&amp;format=CSV" style="overflow-wrap:anywhere">https://quickstats.nass.usda.gov/api/api_GET/?key=3898CF64-E8B6-3792-9E04-C2FC26F5EB27&amp;source_desc=SURVEY&amp;sector_desc=CROPS&amp;state_alpha=MN&amp;agg_level_desc=STATE&amp;statisticcat_desc=PRODUCTION&amp;unit_desc=%24&amp;freq_desc=ANNUAL&amp;year__GE=2015&amp;format=CSV</a>
+</footer>
+
+<script>
+// Crops we already sell. Matching is by text, so "CORN, GRAIN" counts as corn.
+const CURRENT = ["CORN", "SUNFLOWER", "WILD RICE"];
+const COLOR_CURRENT = "#c9822b", COLOR_CANDIDATE = "#3f6e9a";
+
+// All rows from the file are kept here in memory while the page is open.
+// Shape: { crop: "SOYBEANS", year: 2023, value: 6123000000 }
+let rows = [];
+let rankChart, trendChart;
+
+// ---------- Reading the data ----------
+// On load, fetch the saved CSV from this folder (same way app.js loads team.json).
+fetch("mn-crops.csv")
+  .then(r => { if (!r.ok) throw new Error(`mn-crops.csv returned ${r.status}`); return r.text(); })
+  .then(text => load(parseCSV(text), "mn-crops.csv"))
+  .catch(e => {
+    document.getElementById("err").textContent =
+      `Couldn't load mn-crops.csv (${e.message}). If you opened this file directly, ` +
+      `use the file picker above or view it through GitHub Pages / a local server.`;
+  });
+
+// Backup: pick a CSV or JSON by hand.
+document.getElementById("file").addEventListener("change", async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const text = await f.text();
+  const raw = f.name.toLowerCase().endsWith(".json") ? (JSON.parse(text).data || JSON.parse(text)) : parseCSV(text);
+  load(raw, f.name);
+});
+
+function load(raw, name) {
+  rows = cleanRows(raw);
+  document.getElementById("err").textContent = "";
+  document.getElementById("status").textContent =
+    `${name}: ${raw.length} raw rows → ${rows.length} usable crop-year values.`;
+  fillCropPicker();
+  render();
+}
+
+// Small CSV parser that handles quoted fields like "1,234,000".
+function parseCSV(text) {
+  const out = []; let row = [], cell = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+      else if (c === '"') q = false;
+      else cell += c;
+    } else if (c === '"') q = true;
+    else if (c === ",") { row.push(cell); cell = ""; }
+    else if (c === "\n" || c === "\r") {
+      if (c === "\r" && text[i + 1] === "\n") i++;
+      row.push(cell); cell = "";
+      if (row.length > 1) out.push(row);
+      row = [];
+    } else cell += c;
+  }
+  if (cell || row.length) { row.push(cell); out.push(row); }
+  const head = out.shift().map(h => h.trim());
+  return out.map(r => Object.fromEntries(head.map((h, i) => [h, r[i]])));
+}
+
+// Keep only yearly, statewide, dollar-value production rows.
+// NASS hides some numbers as "(D)" (withheld) or "(NA)"; those are dropped, not guessed.
+function cleanRows(raw) {
+  return raw.filter(r =>
+      (r.statisticcat_desc || "").toUpperCase() === "PRODUCTION" &&
+      (r.unit_desc || "") === "$" &&
+      (r.reference_period_desc || "YEAR").toUpperCase() === "YEAR" &&
+      /^[\d,]+$/.test((r.Value || "").trim()))
+    .map(r => ({
+      crop: (r.short_desc || r.commodity_desc).replace(/ - PRODUCTION.*$/i, "").trim(),
+      year: +r.year,
+      value: +r.Value.replace(/,/g, "")
+    }));
+}
+
+// ---------- Summing and ranking ----------
+function summarize() {
+  const span = +document.getElementById("span").value;
+  const lastYear = Math.max(...rows.map(r => r.year));
+  const byCrop = {};
+  rows.filter(r => r.year > lastYear - span).forEach(r => (byCrop[r.crop] ||= []).push(r));
+  return Object.entries(byCrop).map(([crop, rs]) => {
+    rs.sort((a, b) => a.year - b.year);
+    const avg = rs.reduce((s, r) => s + r.value, 0) / rs.length;
+    const change = rs.length > 1 ? (rs.at(-1).value - rs[0].value) / rs[0].value : null;
+    return { crop, avg, change, n: rs.length, current: isCurrent(crop) };
+  }).sort((a, b) => b.avg - a.avg);
+}
+
+const isCurrent = c => CURRENT.some(k => c.toUpperCase().includes(k));
+const money = v => v >= 1e9 ? `$${(v / 1e9).toFixed(2)}B` : `$${(v / 1e6).toFixed(1)}M`;
+const pct = v => v === null ? "–" : `${v > 0 ? "+" : ""}${(v * 100).toFixed(0)}%`;
+
+// ---------- Drawing ----------
+function render() {
+  if (!rows.length) return;
+  document.getElementById("spanOut").textContent = document.getElementById("span").value;
+  const all = summarize();
+  const top = all.slice(0, +document.getElementById("topN").value);
+
+  // Top 3 candidates we don't already sell, as cards
+  document.getElementById("picks").innerHTML = all.filter(d => !d.current).slice(0, 3).map((d, i) => `
+    <div class="card">
+      <h3>${i + 1}. ${d.crop}</h3>
+      <p><b>${money(d.avg)}</b> avg per year</p>
+      <p class="small">${pct(d.change)} over the period, ${d.n} years of data</p>
+    </div>`).join("");
+
+  rankChart?.destroy();
+  rankChart = new Chart(document.getElementById("rank"), {
+    type: "bar",
+    data: { labels: top.map(d => d.crop),
+      datasets: [{ data: top.map(d => d.avg), backgroundColor: top.map(d => d.current ? COLOR_CURRENT : COLOR_CANDIDATE) }] },
+    options: { indexAxis: "y", maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => money(c.raw) + " avg per year" } } },
+      scales: { x: { ticks: { callback: v => money(v) } } } }
+  });
+
+  document.querySelector("#tbl tbody").innerHTML = all.map((d, i) => `<tr>
+    <td>${i + 1}</td><td>${d.crop} ${d.current ? '<span class="tag">we sell</span>' : ""}</td>
+    <td class="num">${money(d.avg)}</td><td class="num">${pct(d.change)}</td><td class="num">${d.n}</td></tr>`).join("");
+
+  renderTrend();
+}
+
+function fillCropPicker() {
+  const crops = [...new Set(rows.map(r => r.crop))].sort();
+  document.getElementById("cropPick").innerHTML = crops.map(c => `<option>${c}</option>`).join("");
+}
+
+function renderTrend() {
+  const crop = document.getElementById("cropPick").value;
+  const rs = rows.filter(r => r.crop === crop).sort((a, b) => a.year - b.year);
+  trendChart?.destroy();
+  trendChart = new Chart(document.getElementById("trend"), {
+    type: "line",
+    data: { labels: rs.map(r => r.year), datasets: [{ label: crop, data: rs.map(r => r.value), tension: .2 }] },
+    options: { maintainAspectRatio: false, scales: { y: { ticks: { callback: v => money(v) } } } }
+  });
+}
+
+["span", "topN"].forEach(id => document.getElementById(id).addEventListener("input", render));
+document.getElementById("cropPick").addEventListener("change", renderTrend);
+</script>
+</body>
+</html>
