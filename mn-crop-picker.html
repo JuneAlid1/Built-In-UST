@@ -9,20 +9,20 @@
   Source: USDA NASS Quick Stats API  https://quickstats.nass.usda.gov/api
   Query used (paste in a browser address bar with your own key; it downloads a CSV):
     https://quickstats.nass.usda.gov/api/api_GET/?key=YOUR_KEY&source_desc=SURVEY&sector_desc=CROPS&state_alpha=MN&agg_level_desc=STATE&statisticcat_desc=PRODUCTION&unit_desc=%24&freq_desc=ANNUAL&year__GE=2015&format=CSV
-  Saved copy: mn-crops.csv (same folder as this page)
+  Saved copy: download.csv (same folder as this page)
   Downloaded on: [FILL IN DATE]
 
   WHERE THE DATA LIVES
-  The page never calls the USDA API. It reads the saved mn-crops.csv in this repo,
+  The page never calls the USDA API. It reads the saved download.csv in this repo,
   so it keeps working if the USDA site goes down. The numbers only change if
-  someone commits a new mn-crops.csv.
+  someone commits a new download.csv.
 -->
 <link rel="stylesheet" href="style.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   /* Only chart/table layout lives here; colors and type come from style.css */
   .controls { display:flex; flex-wrap:wrap; gap:16px; align-items:end; }
-  .controls label { display:flex; flex-direction:column; gap:4px; }
+  .controls label, #loader label { display:flex; flex-direction:column; gap:4px; }
   .chartbox { position:relative; height:420px; }
   .chartbox.short { height:280px; }
   table { width:100%; border-collapse:collapse; }
@@ -47,6 +47,14 @@
        value behind it, and is still growing, so it makes the best fourth product?</p>
   </section>
 
+  <section id="loader">
+    <h2>Data</h2>
+    <label>Load a data file
+      <input type="file" id="file" accept=".csv,.json">
+    </label>
+  </section>
+
+  <div id="results" hidden>
   <section>
     <h2>Top picks</h2>
     <div id="picks" class="cards"></div>
@@ -60,9 +68,6 @@
       </label>
       <label>Show top
         <select id="topN"><option>10</option><option selected>15</option><option>25</option></select>
-      </label>
-      <label>Or load a different file
-        <input type="file" id="file" accept=".csv,.json">
       </label>
     </div>
     <p class="small">
@@ -85,10 +90,11 @@
   </section>
 
   <p class="small" id="status"></p>
+  </div>
   <p class="err" id="err"></p>
 </main>
 <footer class="wrap small">
-  Page data comes from <code>mn-crops.csv</code> in this folder (USDA NASS Quick Stats).
+  Page data comes from <code>download.csv</code> in this folder (USDA NASS Quick Stats).
   Download new data from here:
   <a href="https://quickstats.nass.usda.gov/api/api_GET/?key=3898CF64-E8B6-3792-9E04-C2FC26F5EB27&amp;source_desc=SURVEY&amp;sector_desc=CROPS&amp;state_alpha=MN&amp;agg_level_desc=STATE&amp;statisticcat_desc=PRODUCTION&amp;unit_desc=%24&amp;freq_desc=ANNUAL&amp;year__GE=2015&amp;format=CSV" style="overflow-wrap:anywhere">https://quickstats.nass.usda.gov/api/api_GET/?key=3898CF64-E8B6-3792-9E04-C2FC26F5EB27&amp;source_desc=SURVEY&amp;sector_desc=CROPS&amp;state_alpha=MN&amp;agg_level_desc=STATE&amp;statisticcat_desc=PRODUCTION&amp;unit_desc=%24&amp;freq_desc=ANNUAL&amp;year__GE=2015&amp;format=CSV</a>
 </footer>
@@ -100,19 +106,21 @@ const COLOR_CURRENT = "#c9822b", COLOR_CANDIDATE = "#3f6e9a";
 
 // All rows from the file are kept here in memory while the page is open.
 // Shape: { crop: "SOYBEANS", year: 2023, value: 6123000000 }
+// ME: This is where the data sits while the page is open. Each item is one crop
+// ME: for one year, with its dollar value. It only lives in memory, so refreshing
+// ME: the page reads the file again.
 let rows = [];
 let rankChart, trendChart;
 
 // ---------- Reading the data ----------
 // On load, fetch the saved CSV from this folder (same way app.js loads team.json).
-fetch("mn-crops.csv")
-  .then(r => { if (!r.ok) throw new Error(`mn-crops.csv returned ${r.status}`); return r.text(); })
-  .then(text => load(parseCSV(text), "mn-crops.csv"))
-  .catch(e => {
-    document.getElementById("err").textContent =
-      `Couldn't load mn-crops.csv (${e.message}). If you opened this file directly, ` +
-      `use the file picker above or view it through GitHub Pages / a local server.`;
-  });
+// ME: This is where the data comes in. The page asks for download.csv in this
+// ME: folder, and the file picker below can load a different file instead.
+// ME: The page does not call the USDA site itself.
+fetch("download.csv")
+  .then(r => { if (!r.ok) throw new Error(`download.csv returned ${r.status}`); return r.text(); })
+  .then(text => load(parseCSV(text), "download.csv"))
+  .catch(() => {});
 
 // Backup: pick a CSV or JSON by hand.
 document.getElementById("file").addEventListener("change", async e => {
@@ -126,6 +134,14 @@ document.getElementById("file").addEventListener("change", async e => {
 function load(raw, name) {
   rows = cleanRows(raw);
   document.getElementById("err").textContent = "";
+  if (!rows.length) {
+    rankChart?.destroy();
+    trendChart?.destroy();
+    document.getElementById("results").hidden = true;
+    document.getElementById("err").textContent = `${name} had no usable crop-year values.`;
+    return;
+  }
+  document.getElementById("results").hidden = false;
   document.getElementById("status").textContent =
     `${name}: ${raw.length} raw rows → ${rows.length} usable crop-year values.`;
   fillCropPicker();
@@ -157,6 +173,10 @@ function parseCSV(text) {
 
 // Keep only yearly, statewide, dollar-value production rows.
 // NASS hides some numbers as "(D)" (withheld) or "(NA)"; those are dropped, not guessed.
+// ME: This is where the data gets changed. cleanRows filters down to real dollar
+// ME: amounts and drops the total rows. summarize then adds each crop's years into
+// ME: an average and a change. render uses that to fill the cards, the bar chart,
+// ME: and the table.
 function cleanRows(raw) {
   return raw.filter(r =>
       (r.statisticcat_desc || "").toUpperCase() === "PRODUCTION" &&
@@ -167,7 +187,8 @@ function cleanRows(raw) {
       crop: (r.short_desc || r.commodity_desc).replace(/ - PRODUCTION.*$/i, "").trim(),
       year: +r.year,
       value: +r.Value.replace(/,/g, "")
-    }));
+    }))
+    .filter(r => r.crop && !/\bTOTALS?\b/i.test(r.crop));
 }
 
 // ---------- Summing and ranking ----------
