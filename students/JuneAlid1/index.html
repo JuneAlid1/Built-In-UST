@@ -1,1 +1,244 @@
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UST Harvest Supply | Minnesota Crop Comparison</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f5f7f3;
+      color: #26352b;
+      margin: 0;
+      padding: 30px 16px;
+    }
+
+    main {
+      max-width: 900px;
+      margin: auto;
+    }
+
+    h1 {
+      color: #315b3b;
+    }
+
+    .panel {
+      background: white;
+      padding: 22px;
+      margin: 20px 0;
+      border-radius: 10px;
+      border: 1px solid #dce5dc;
+    }
+
+    label {
+      display: block;
+      margin: 12px 0 6px;
+      font-weight: bold;
+    }
+
+    select {
+      padding: 10px;
+      width: 100%;
+      max-width: 350px;
+      font-size: 16px;
+    }
+
+    .number {
+      font-size: 26px;
+      font-weight: bold;
+      color: #315b3b;
+    }
+
+    .note {
+      color: #59665c;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .bar {
+      background: #dce8dc;
+      height: 22px;
+      margin: 8px 0 16px;
+      border-radius: 5px;
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      background: #54845b;
+      height: 100%;
+    }
+
+    footer {
+      margin-top: 30px;
+      font-size: 13px;
+      color: #59665c;
+    }
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>UST Harvest Supply</h1>
+    <p>Comparing Minnesota-grown crops for potential sourcing opportunities.</p>
+
+    <section class="panel">
+      <h2>Crop Production Comparison</h2>
+      <p>
+        Explore reported Minnesota production for natural wild rice,
+        sweet corn, and sunflower seeds.
+      </p>
+
+      <label for="productFilter">Choose a product</label>
+      <select id="productFilter">
+        <option value="all">All products</option>
+      </select>
+
+      <label for="yearFilter">Choose a year</label>
+      <select id="yearFilter">
+        <option value="all">All years</option>
+      </select>
+    </section>
+
+    <section class="panel">
+      <h2>Production Data</h2>
+      <div id="results">Loading data...</div>
+      <p class="note" id="dataNote"></p>
+    </section>
+
+    <section class="panel">
+      <h2>What This Data Tells Us</h2>
+      <p>
+        Production figures help show the scale of Minnesota crop production.
+        However, total production does not tell us how much is available
+        for UST Harvest Supply to purchase.
+      </p>
+      <p>
+        Supplier prices, customer demand, harvest conditions, and product
+        quality should also be considered before making a sourcing decision.
+      </p>
+    </section>
+
+    <footer>
+      Data is stored locally in crop-comparison.csv.
+      See decision-and-source.md for source information and limitations.
+    </footer>
+  </main>
+
+  <script>
+    // Source: Minnesota DNR 2022 Natural Wild Rice Harvester Survey and
+    // USDA NASS Minnesota State Agriculture Overview.
+    // Data accessed November 17, 2026.
+    // Source URLs are documented in decision-and-source.md.
+    // Data is stored locally in crop-comparison.csv, not fetched from an API.
+
+    // ME: Load the stored CSV file from this folder.
+    async function loadData() {
+      const response = await fetch("crop-comparison.csv");
+      if (!response.ok) {
+        throw new Error("Could not load crop-comparison.csv");
+      }
+
+      const csvText = await response.text();
+      const lines = csvText.trim().split(/\r?\n/);
+      const headers = lines[0].split(",");
+
+      // ME: Keep the CSV rows in memory while the page is running.
+      const data = lines.slice(1).map(line => {
+        const values = line.split(",");
+        const item = {};
+
+        headers.forEach((header, index) => {
+          item[header.trim()] = values[index].trim();
+        });
+
+        return {
+          Product: item.Product,
+          Year: item.Year,
+          Production: Number(item.Production),
+          Unit: item.Unit,
+          Source: item.Source
+        };
+      });
+
+      setupFilters(data);
+      updatePage(data);
+    }
+
+    function setupFilters(data) {
+      const productFilter = document.getElementById("productFilter");
+      const yearFilter = document.getElementById("yearFilter");
+
+      [...new Set(data.map(item => item.Product))].forEach(product => {
+        const option = document.createElement("option");
+        option.value = product;
+        option.textContent = product;
+        productFilter.appendChild(option);
+      });
+
+      [...new Set(data.map(item => item.Year))].forEach(year => {
+        const option = document.createElement("option");
+        option.value = year;
+        option.textContent = year;
+        yearFilter.appendChild(option);
+      });
+
+      productFilter.addEventListener("change", () => updatePage(data));
+      yearFilter.addEventListener("change", () => updatePage(data));
+    }
+
+    function updatePage(data) {
+      const selectedProduct = document.getElementById("productFilter").value;
+      const selectedYear = document.getElementById("yearFilter").value;
+
+      // ME: Filter the stored data and calculate the bar sizes for display.
+      const filtered = data.filter(item => {
+        const productMatches =
+          selectedProduct === "all" || item.Product === selectedProduct;
+        const yearMatches =
+          selectedYear === "all" || item.Year === selectedYear;
+
+        return productMatches && yearMatches;
+      });
+
+      const results = document.getElementById("results");
+      const note = document.getElementById("dataNote");
+
+      if (filtered.length === 0) {
+        results.textContent = "No data matches your selection.";
+        note.textContent = "";
+        return;
+      }
+
+      const maxProduction = Math.max(...filtered.map(item => item.Production));
+
+      results.innerHTML = filtered.map(item => {
+        const width = (item.Production / maxProduction) * 100;
+
+        return `
+          <div>
+            <strong>${item.Product} (${item.Year})</strong>
+            <div class="number">
+              ${item.Production.toLocaleString()} ${item.Unit}
+            </div>
+            <div class="bar">
+              <div class="bar-fill" style="width: ${width}%"></div>
+            </div>
+            <p class="note">Source: ${item.Source}</p>
+          </div>
+        `;
+      }).join("");
+
+      note.textContent =
+        "Important: Units and reporting years differ. Bar lengths compare the displayed numeric values only; they do not establish which crop has more commercially available supply.";
+    }
+
+    loadData().catch(error => {
+      document.getElementById("results").textContent =
+        error.message + ". Check that crop-comparison.csv is in the same folder.";
+    });
+  </script>
+</body>
+</html>
+
